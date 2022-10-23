@@ -1,0 +1,114 @@
+name: K6 Load Test Run
+
+run-name: ${{ inputs.project }} load test ${{ inputs.script }} in ${{ inputs.environment }} env.
+
+env:
+  K6_NAMESPACE: k6-operator-system
+
+on:
+  workflow_dispatch:
+    inputs:
+      project:
+        type: choice
+        description: Project/Product of the test script to execute
+        required: true
+        options:
+          - "sample"
+      environment:
+        type: environment
+        description: Envrionment of the test script to execute
+        default: qa
+        required: true
+      script:
+        type: string
+        description: Name of the test script to execute
+        required: true
+      parallelism:
+        type: choice
+        description: Number of pods to run the test.
+        required: true
+        options:
+          - "1"
+          - "2"
+          - "3"
+          - "4"
+          - "5"
+          - "6"
+          - "7"
+          - "8"
+          - "9"
+          - "10"
+jobs:
+  test_run:
+    name: Test Run
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v3
+      
+      - name: Check if test script exists
+        run: |
+          test_script_path='scripts/${{ inputs.project }}/${{ inputs.environment }}/${{ inputs.script }}'
+          config_map_name=$(echo '${{ inputs.project }}-${{ inputs.environment }}-${{ inputs.script }}' | cut -f 1 -d '.')
+          test_run_id=$(date +%s)
+          if [ ! -e $test_script_path ];
+          then
+            echo "File not found: $test_script_path"
+            exit 1;
+          else
+            echo "File found: $test_script_path"
+            echo "TEST_SCRIPT_PATH=$test_script_path" >> $GITHUB_ENV
+            echo "K6_CONFIGMAP_NAME=$config_map_name" >> $GITHUB_ENV
+            echo "K6_TEST_RUN_ID=$test_run_id" >> $GITHUB_ENV
+          fi
+      
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v2.0
+        with:
+          version: 'v1.23.6'
+        id: install
+
+      - name: Configure AWS credential
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ secrets.ROLE_TO_ASSUME }}
+
+      - name: Update KubeConfig
+        shell: bash
+        run: |
+          aws eks update-kubeconfig --name ${{ secrets.AWS_CLUSTER_NAME }} --region=${{ secrets.AWS_REGION }}
+
+      - name: Replace tokens in K6 CRD
+        uses: cschleiden/replace-tokens@v1
+        with:
+          tokenPrefix: '${'
+          tokenSuffix: '}'
+          files: '["k6_crd.yaml", "${{ env.TEST_SCRIPT_PATH }}"]'
+        env:
+          K6_CRD_NAME: ${{ env.K6_CONFIGMAP_NAME }}
+          K6_INFLUXDB_USERNAME: ${{ secrets.K6_INFLUXDB_USERNAME }}
+          K6_INFLUXDB_PASSWORD: ${{ secrets.K6_INFLUXDB_PASSWORD }}
+          K6_INFLUXDB_URL: ${{ secrets.K6_INFLUXDB_URL }}
+          K6_TEST_SCRIPT_NAME: ${{ inputs.script }}
+          K6_PROJECT: ${{ inputs.project }}
+          K6_ENVRIONMENT: ${{ inputs.environment }}
+          K6_PARALLELISM: ${{ inputs.parallelism }}
+          CPU: 1000m
+          MEMORY: 2048Mi
+
+      - name: Create configmap with test script
+        run: |
+          kubectl delete configmap/${{ env.K6_CONFIGMAP_NAME }} -n ${{ env.K6_NAMESPACE }} --ignore-not-found
+          kubectl create configmap ${{ env.K6_CONFIGMAP_NAME }} --from-file ${{ env.TEST_SCRIPT_PATH }} -n ${{ env.K6_NAMESPACE }}
+      
+
+      - name: Create K6 CRD
+        run: |
+          kubectl delete -f k6_crd.yaml --ignore-not-found
+          kubectl create -f k6_crd.yaml
+  
