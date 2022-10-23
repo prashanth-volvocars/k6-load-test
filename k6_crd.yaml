@@ -1,0 +1,23 @@
+apiVersion: k6.io/v1alpha1
+kind: K6
+metadata:
+  name: "${K6_CRD_NAME}"
+  namespace: "${K6_NAMESPACE}"
+spec:
+  parallelism: ${K6_PARALLELISM}
+  cleanup: "post"
+  arguments: "--out influxdb=${K6_INFLUXDB_URL} --tag project=${K6_PROJECT} --tag environment=${K6_ENVRIONMENT} --tag testid=${K6_TEST_RUN_ID}"
+  script:
+    configMap:
+      name: "${K6_CONFIGMAP_NAME}"
+      file: "${K6_TEST_SCRIPT_NAME}"
+  runner:
+    resources:
+      requests:
+        cpu: ${CPU}
+        memory: ${MEMORY}
+    env:
+      - name: "K6_INFLUXDB_USERNAME"
+        value: "${K6_INFLUXDB_USERNAME}"
+      - name: "K6_INFLUXDB_PASSWORD"
+        value: "${K6_INFLUXDB_PASSWORD}"
